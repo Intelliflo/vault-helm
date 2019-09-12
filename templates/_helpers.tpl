@@ -47,7 +47,7 @@ Add a special case for replicas=1, where it should default to 0 as well.
 {{- end -}}
 
 {{/*
-Set the variable 'mode' to the server mode requested by the user to simplify 
+Set the variable 'mode' to the server mode requested by the user to simplify
 template logic.
 */}}
 {{- define "vault.mode" -}}
@@ -76,19 +76,17 @@ Set's the replica count based on the different modes configured by user
 {{- end -}}
 
 {{/*
-Set's fsGroup based on different modes.  Standalone is the only mode 
-that requires fsGroup at this time because it uses PVC for the file 
+Set's fsGroup based on different modes.  Standalone is the only mode
+that requires fsGroup at this time because it uses PVC for the file
 storage backend.
 */}}
 {{- define "vault.fsgroup" -}}
-  {{ if eq .mode "standalone" }}
     {{- .Values.server.storageFsGroup | default 1000 -}}
-  {{ end }}
 {{- end -}}
 
 {{/*
-Set's up configmap mounts if this isn't a dev deployment and the user 
-defined a custom configuration.  Additionally iterates over any 
+Set's up configmap mounts if this isn't a dev deployment and the user
+defined a custom configuration.  Additionally iterates over any
 extra volumes the user may have specified (such as a secret with TLS).
 */}}
 {{- define "vault.volumes" -}}
@@ -109,8 +107,8 @@ extra volumes the user may have specified (such as a secret with TLS).
 {{- end -}}
 
 {{/*
-Set's a command to override the entrypoint defined in the image 
-so we can make the user experience nicer.  This works in with 
+Set's a command to override the entrypoint defined in the image
+so we can make the user experience nicer.  This works in with
 "vault.args" to specify what commands /bin/sh should run.
 */}}
 {{- define "vault.command" -}}
@@ -121,14 +119,28 @@ so we can make the user experience nicer.  This works in with
 {{- end -}}
 
 {{/*
-Set's the args for custom command to render the Vault configuration 
-file with IP addresses to make the out of box experience easier 
+Set's the args for custom command to render the Vault configuration
+file with IP addresses to make the out of box experience easier
 for users looking to use this chart with Consul Helm.
 */}}
 {{- define "vault.args" -}}
-  {{ if or (eq .mode "standalone") (eq .mode "ha") }}
+  {{ if eq .mode "standalone" }}
           - |
-            sed -E "s/HOST_IP/${HOST_IP?}/g" /vault/config/extraconfig-from-values.hcl > /tmp/storageconfig.hcl; 
+            sed -E "s/HOST_IP/${HOST_IP?}/g" /vault/config/extraconfig-from-values.hcl > /tmp/storageconfig.hcl;
+            sed -Ei "s/POD_IP/${POD_IP?}/g" /tmp/storageconfig.hcl;
+            chown vault:vault /tmp/storageconfig.hcl;
+            /usr/local/bin/docker-entrypoint.sh vault server -config=/tmp/storageconfig.hcl
+  {{ end }}
+  {{ if eq (.Values.server.ha.enabled | toString) "true" }}
+          - |
+            apk add py-pip;
+            pip install awscli; aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --web-identity-token file://$AWS_WEB_IDENTITY_TOKEN_FILE --role-session-name integration-test --duration-seconds 3600 > /tmp/session.json;
+            wget https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64;
+            chmod +x jq-linux64; mv jq-linux64 jq;
+            export AWS_ACCESS_KEY_ID=$(cat /tmp/session.json | ./jq -r .Credentials.AccessKeyId);
+            export AWS_SECRET_ACCESS_KEY=$(cat /tmp/session.json | ./jq -r .Credentials.SecretAccessKey);
+            export AWS_SESSION_TOKEN=$(cat /tmp/session.json | ./jq -r .Credentials.SessionToken);
+            sed -E "s/HOST_IP/${HOST_IP?}/g" /vault/config/extraconfig-from-values.hcl > /tmp/storageconfig.hcl;
             sed -Ei "s/POD_IP/${POD_IP?}/g" /tmp/storageconfig.hcl;
             chown vault:vault /tmp/storageconfig.hcl;
             /usr/local/bin/docker-entrypoint.sh vault server -config=/tmp/storageconfig.hcl
@@ -146,11 +158,10 @@ Set's additional environment variables based on the mode.
 {{- end -}}
 
 {{/*
-Set's which additional volumes should be mounted to the container 
+Set's which additional volumes should be mounted to the container
 based on the mode configured.
 */}}
 {{- define "vault.mounts" -}}
-  {{ if eq .mode "standalone" }}
     {{ if eq (.Values.server.auditStorage.enabled | toString) "true" }}
             - name: audit
               mountPath: /vault/audit
@@ -159,7 +170,6 @@ based on the mode configured.
             - name: data
               mountPath: /vault/data
     {{ end }}
-  {{ end }}
   {{ if and (ne .mode "dev") (or (ne .Values.server.standalone.config "")  (ne .Values.server.ha.config "")) }}
             - name: config
               mountPath: /vault/config
@@ -172,14 +182,14 @@ based on the mode configured.
 {{- end -}}
 
 {{/*
-Set's up the volumeClaimTemplates when data or audit storage is required.  HA 
-might not use data storage since Consul is likely it's backend, however, audit 
+Set's up the volumeClaimTemplates when data or audit storage is required.  HA
+might not use data storage since Consul is likely it's backend, however, audit
 storage might be desired by the user.
 */}}
 {{- define "vault.volumeclaims" -}}
-  {{- if and (ne .mode "dev") (or .Values.server.dataStorage.enabled .Values.server.auditStorage.enabled) }}
+  {{- if or (eq (.Values.server.dataStorage.enabled | toString) "true") (eq (.Values.server.auditStorage.enabled | toString) "true") }}
   volumeClaimTemplates:
-      {{- if and (eq (.Values.server.dataStorage.enabled | toString) "true") (eq .mode "standalone") }}
+      {{- if eq (.Values.server.dataStorage.enabled | toString) "true" }}
     - metadata:
         name: data
       spec:
