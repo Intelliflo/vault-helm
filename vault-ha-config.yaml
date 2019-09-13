@@ -1,0 +1,51 @@
+global:
+  enabled: true
+  image: "vault:latest"
+
+server:
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: {{ template "vault.name" . }}
+              release: "{{ .Release.Name }}"
+              component: server
+          topologyKey: kubernetes.io/hostname
+
+  service:
+    enabled: true
+
+  nodeSelector:
+    "beta.kubernetes.io/os: linux"
+
+  dataStorage:
+    enabled: true
+    accessMode: "ReadWriteOnce"
+    size: "5Gi"
+    storageClass: "gp2"
+
+  ha:
+    enabled: true
+    replicas: 5
+
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable = "true"
+        address = "0.0.0.0:8200"
+        cluster_address = "0.0.0.0:8201"
+      }
+
+      storage "raft" {
+        path = "/vault/data"
+      }
+
+      cluster_addr = "http://POD_IP:8201"
+
+      seal "awskms" {
+        region = "eu-west-2"
+        kms_key_id = ""
+        endpoint = "https://kms.eu-west-2.amazonaws.com"
+      }
